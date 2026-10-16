@@ -74,6 +74,7 @@ input:focus{outline:2px solid var(--accent);outline-offset:-1px}
 .tasklist .tbtn.on{background:var(--active);border-color:var(--accent);box-shadow:inset 4px 0 0 var(--accent)}
 .tasklist .tbtn:active{transform:scale(.99)}
 .newtask{display:flex;gap:8px;align-items:center;border:1px dashed var(--line);border-radius:var(--radius);padding:10px;background:var(--card)}
+.newtask.on{border:1px solid var(--accent);background:var(--active);box-shadow:inset 4px 0 0 var(--accent)}
 .newtask .num{font-weight:700;color:var(--muted);min-width:2.2em;padding-left:4px}
 .paused-banner{background:#fff1d6;color:#6b4200;border-radius:10px;padding:8px 12px;margin-top:10px;font-weight:600}
 
@@ -394,6 +395,7 @@ function renderObserve(){
   const counts = {}; s.events.forEach(e => counts[e.taskId] = (counts[e.taskId]||0) + 1);
   const curTask = cur && p.tasks.find(t => t.id === cur.taskId);
   const paused = s.status === 'paused';
+  const pend = pendingTask(p);
   $app.innerHTML = `
     <div class="obs-top">
       <div class="row">
@@ -402,7 +404,7 @@ function renderObserve(){
           <div><div class="lbl">Current task</div><div class="t-task" id="tTask">${cur ? fmtDur(elapsed(s) - cur.el) : '--:--:--.-'}</div></div>
         </div>
       </div>
-      <div class="cur">${curTask ? `<strong>${curTask.num}</strong> · ${esc(curTask.name)}` : (s.status === 'ready' ? 'Tap a task to start timing' : '')}</div>
+      <div class="cur" id="curLbl">${curTask ? `<strong>${curTask.num}</strong> · ${curTask.pending ? 'New task (enter name below)' : esc(curTask.name)}` : (s.status === 'ready' ? 'Tap a task to start timing' : '')}</div>
       <div class="row" style="margin-top:10px">
         ${s.status === 'running' ? `<button id="pause" class="grow">❚❚ Pause</button>` : ''}
         ${paused ? `<button id="resume" class="go grow">▶ Resume</button><button id="stop" class="stop grow">■ Stop</button>` : ''}
@@ -411,28 +413,49 @@ function renderObserve(){
       ${paused ? `<div class="paused-banner">Paused – timing is on hold</div>` : ''}
     </div>
     <div class="tasklist">
-      ${sortedTasks(p).map(t => `
+      ${sortedTasks(p).filter(t => !t.pending).map(t => `
         <button class="tbtn ${cur && cur.taskId === t.id && !paused ? 'on' : ''}" data-tid="${t.id}" ${paused ? 'disabled' : ''}>
           <span class="num">${t.num}</span><span>${esc(t.name)}</span><span class="cnt">${counts[t.id] ? '×' + counts[t.id] : ''}</span>
         </button>`).join('')}
-      <div class="newtask">
-        <span class="num">${nextTaskNum(p)}</span>
-        <input type="text" id="newTask" class="grow" placeholder="New / unexpected task…" maxlength="100" enterkeyhint="done">
+      <div class="newtask ${pend && cur && cur.taskId === pend.id && !paused ? 'on' : ''}" id="newBox">
+        <span class="num">${pend ? pend.num : nextTaskNum(p)}</span>
+        <input type="text" id="newTask" class="grow" placeholder="New / unexpected task…" maxlength="100" enterkeyhint="done" value="${esc(view.newText || '')}">
         <button id="addTask" class="primary">Add</button>
       </div>
     </div>
   `;
   $app.querySelectorAll('[data-tid]').forEach(b => b.onclick = () => tapTask(p, s, b.dataset.tid));
+  const inp = document.getElementById('newTask');
   const addNew = () => {
-    const inp = document.getElementById('newTask'); const name = inp.value.trim();
-    if(!name) return;
-    const t = {id:uid(), num:nextTaskNum(p), name}; p.tasks.push(t); p.updated = Date.now(); persist();
+    const name = inp.value.trim();
+    if(!name){ inp.focus(); return; }
+    const t = commitPending(p, name) || (() => { const t = {id:uid(), num:nextTaskNum(p), name}; p.tasks.push(t); return t; })();
+    view.newText = ''; p.updated = Date.now(); persist();
     renderObserve(); toast(`Task ${t.num} added`);
   };
+  // Clicking into the new-task box starts timing the new task straight away.
+  const startNew = () => {
+    if(s.status === 'paused' || s.status === 'stopped' || pendingTask(p)) return;
+    const now = Date.now();
+    if(s.status === 'ready'){ s.startWall = now; s.status = 'running'; }
+    const t = {id:uid(), num:nextTaskNum(p), name:'', pending:true}; p.tasks.push(t);
+    s.events.push({taskId:t.id, wall:now, el:elapsed(s, now)});
+    p.updated = now; persist();
+    // update the screen without redrawing it, so the keyboard stays open
+    $app.querySelectorAll('.tbtn.on').forEach(b => b.classList.remove('on'));
+    document.getElementById('newBox').classList.add('on');
+    document.getElementById('curLbl').innerHTML = `<strong>${t.num}</strong> · New task (enter name below)`;
+    const ex = document.getElementById('exit');
+    if(ex){ ex.outerHTML = `<button id="pause" class="grow">❚❚ Pause</button>`; document.getElementById('pause').onclick = doPause; }
+  };
+  inp.addEventListener('pointerdown', startNew);
+  inp.addEventListener('focus', startNew);
+  inp.addEventListener('input', () => view.newText = inp.value);
   document.getElementById('addTask').onclick = addNew;
-  document.getElementById('newTask').addEventListener('keydown', e => { if(e.key === 'Enter'){ e.preventDefault(); addNew(); } });
+  inp.addEventListener('keydown', e => { if(e.key === 'Enter'){ e.preventDefault(); addNew(); } });
+  const doPause = () => { s.pauses.push({from:Date.now(), to:null}); s.status = 'paused'; persist(); renderObserve(); };
   const on = (id, fn) => { const el = document.getElementById(id); if(el) el.onclick = fn; };
-  on('pause', () => { s.pauses.push({from:Date.now(), to:null}); s.status = 'paused'; persist(); renderObserve(); });
+  on('pause', doPause);
   on('resume', () => { const lp = s.pauses[s.pauses.length-1]; if(lp && lp.to == null) lp.to = Date.now(); s.status = 'running'; persist(); renderObserve(); });
   on('stop', () => stopSession(p, s));
   on('exit', () => go({name:'project', id:p.id}));
@@ -446,8 +469,24 @@ function updateClocks(){
   if(a) a.textContent = fmtDur(el);
   if(b && cur) b.textContent = fmtDur(el - cur.el);
 }
+function pendingTask(p){ return p.tasks.find(t => t.pending); }
+function commitPending(p, name){
+  const t = pendingTask(p); if(!t) return null;
+  t.name = name; delete t.pending; return t;
+}
 function tapTask(p, s, taskId){
   if(s.status === 'paused' || s.status === 'stopped') return;
+  const pend = pendingTask(p);
+  if(pend){
+    const typed = (view.newText || '').trim();
+    if(typed){ commitPending(p, typed); }           // name typed but Add not pressed: keep it
+    else {                                          // box tapped but nothing typed: discard it
+      p.tasks = p.tasks.filter(t => t !== pend);
+      s.events = s.events.filter(e => e.taskId !== pend.id);
+      if(!s.events.length){ s.startWall = null; s.status = 'ready'; s.pauses = []; }
+    }
+    view.newText = '';
+  }
   const now = Date.now();
   if(s.status === 'ready'){ s.startWall = now; s.status = 'running'; }
   s.events.push({taskId, wall:now, el:elapsed(s, now)});
@@ -455,6 +494,8 @@ function tapTask(p, s, taskId){
   renderObserve();
 }
 function stopSession(p, s){
+  const pend = pendingTask(p);
+  if(pend){ commitPending(p, (view.newText || '').trim() || `Unnamed task ${pend.num}`); view.newText = ''; }
   const lp = s.pauses[s.pauses.length-1];
   // The stop moment is the moment the pause began (paused time is not counted).
   const endEl = lp && lp.to == null ? (lp.from - s.startWall - s.pauses.slice(0,-1).reduce((x,q) => x + (q.to - q.from), 0)) : elapsed(s);
