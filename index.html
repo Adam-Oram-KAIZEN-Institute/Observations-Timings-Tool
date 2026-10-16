@@ -6,8 +6,8 @@
 <meta name="theme-color" content="#103273">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-title" content="Station Timer">
-<title>Station Timer</title>
+<meta name="apple-mobile-web-app-title" content="Obs Timings">
+<title>Observations Timings Tool</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
@@ -199,7 +199,7 @@ function summaryFor(p, s){
 /* ===================== Router ===================== */
 let view = {name:'home'};
 let tick = null;
-function go(v){
+var go = function(v){
   view = v; clearInterval(tick); tick = null;
   window.scrollTo(0,0); render();
 }
@@ -211,7 +211,7 @@ function render(){
 function renderHome(){
   const list = [...projects].sort((a,b) => b.updated - a.updated);
   $app.innerHTML = `
-    <header class="bar"><h1>Station Timer</h1>
+    <header class="bar"><h1>Observations Timings Tool</h1>
       <button class="ghost" id="menu" aria-label="More">•••</button></header>
     <button class="primary big" id="new">+ New project</button>
     <h2>Projects</h2>
@@ -245,7 +245,7 @@ function homeMenu(){
       {label:'Import backup', onClick:() => importBackup()},
       {label:'Export backup', cls:'primary', onClick:() => {
         const blob = new Blob([JSON.stringify({app:'StationTimer', version:1, exported:Date.now(), projects}, null, 1)], {type:'application/json'});
-        downloadBlob(blob, `station-timer-backup-${fileStamp(Date.now())}.json`);
+        downloadBlob(blob, `observations-timings-tool-backup-${fileStamp(Date.now())}.json`);
       }}
     ]});
 }
@@ -701,7 +701,17 @@ render();
 
 /* Offline support: save the app on the device the first time it is opened online */
 if('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')){
-  navigator.serviceWorker.register('sw.js').catch(() => {});
+  navigator.serviceWorker.register('sw.js', {updateViaCache:'none'}).then(r => r.update()).catch(() => {});
+  /* When a new version has been downloaded, switch to it straight away
+     (but never in the middle of an observation – wait until it is left). */
+  const hadController = !!navigator.serviceWorker.controller;
+  let updateReady = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if(!hadController) return;
+    if(view.name === 'observe'){ updateReady = true; return; }
+    location.reload();
+  });
+  const _go = go; go = v => { if(updateReady && v.name !== 'observe'){ persist(); location.reload(); return; } _go(v); };
 }
 /* Ask the browser not to clear saved projects when storage runs low */
 try{ navigator.storage && navigator.storage.persist && navigator.storage.persist(); }catch(e){}

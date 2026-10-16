@@ -1,6 +1,6 @@
 // Station Timer – offline support.
 // Bump VERSION whenever you upload changed files so phones pick up the update.
-const VERSION = 'station-timer-v2';
+const VERSION = 'station-timer-v5';
 const FILES = ['./', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png', './apple-touch-icon.png'];
 
 self.addEventListener('install', e => {

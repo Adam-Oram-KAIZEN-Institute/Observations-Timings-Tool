@@ -1,7 +1,7 @@
 {
-  "name": "Station Timer",
-  "short_name": "Station Timer",
-  "description": "Offline time study tool for timing work stations",
+  "name": "Observations Timings Tool",
+  "short_name": "Obs Timings",
+  "description": "Offline observations and time study tool",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
